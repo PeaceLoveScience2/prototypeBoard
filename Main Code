@@ -1,0 +1,166 @@
+#include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
+#include <EEPROM.h>
+
+// called this way, it uses the default address 0x40
+Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
+// you can also call it with a different address you want
+//Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x41);
+
+#if defined(ARDUINO_ARCH_SAMD)  
+// for Zero, output on USB Serial console, remove line below if using programming port to program the Zero!
+   #define Serial SerialUSB
+
+#endif
+
+#define TRUE 1
+#define FALSE 0
+#define STEPVALUE 100
+
+int slider[4]; 
+
+int mapValue[4];  
+
+const int switchPin = 3;
+int switchState = 0;
+
+const int buttonPin[4] = {4, 5, 6, 7};
+
+int driveForward[4] = {TRUE, TRUE, TRUE, TRUE};
+
+
+void setup() { 
+#ifdef ESP8266
+  Wire.pins(2, 14);   // ESP8266 can use any two pins, such as SDA to #2 and SCL to #14
+#endif
+
+  Serial.begin(9600);
+  Serial.println("16 channel PWM test!");
+
+  pwm.begin();
+  pwm.setPWMFreq(500);  // This is the maximum PWM frequency
+
+  // if you want to really speed stuff up, you can go into 'fast 400khz I2C' mode
+  // some i2c devices dont like this so much so if you're sharing the bus, watch
+  // out for this!
+#ifdef TWBR    
+  // save I2C bitrate
+  uint8_t twbrbackup = TWBR;
+  // must be changed after calling Wire.begin() (inside pwm.begin())
+  TWBR = 12; // upgrade to 400KHz!
+#endif
+  pinMode(switchPin, INPUT_PULLUP);
+  for (int i=0; i < 4; i++){
+    pinMode(buttonPin[i], INPUT_PULLUP
+    );
+    int val = EEPROM.read(i); 
+    Serial.println("EEPROM read"); 
+    if (val == 255) {
+      EEPROM.write(i, driveForward[i]); 
+    } else if (val == FALSE){
+      driveForward[i] = FALSE; 
+    } else {
+      driveForward[i] = TRUE; 
+    }
+  }
+}
+
+void loop() {
+  // Drive each PWM in a 'wave'
+    #ifdef ESP8266
+    yield();
+    #endif
+    switchState = digitalRead(switchPin);
+    if (switchState == LOW) {
+      Serial.println("off");
+      pwm.setPWM(0,0,0);
+      pwm.setPWM(1,0,0);
+      pwm.setPWM(2,0,0);
+      pwm.setPWM(3,0,0);
+      return;
+    }
+    for (uint8_t i=0; i < 4; i++) { 
+     // pwm.setPWM(pwmnum, 0, (i + (4096/16)*pwmnum) % 4096 );
+      slider[i]= analogRead(i);
+Serial.println(slider[i]); 
+
+//#if 0
+      // analogWrite(0,450);
+      checkButton(i); 
+      if (driveForward[i] == TRUE) {
+        mapValue[i] = mapValueForward(slider[i]); 
+      }
+      else {
+        mapValue[i] = mapValueReverse(slider[i]); 
+      }
+      //mapValue[i] = map(slider[i],0,1023,2900,3900 );
+      //mapValue[i] = map(slider[i],0,660,3650,4000);
+      pwm.setPWM(i,0,mapValue[i]); 
+      //Serial.print(i);
+      //Serial.print(": ");
+      Serial.print(slider[i]);
+      Serial.print(", ");
+      Serial.println(mapValue[i]);
+//#endif
+    } 
+   }
+
+int mapValueForward(int sliderInput) {
+  return map(sliderInput,0,1023,2900,3900);
+}
+
+int mapValueReverse(int sliderInput) {
+  return map(sliderInput,0,1023,2900,1900);   //These values are not yet set for reverse
+}
+
+void checkButton (int buttonIndex) {
+  int buttonState = digitalRead(buttonPin[buttonIndex]); 
+  if (buttonState == HIGH) {
+    return; 
+  }
+  while (buttonState == LOW) {
+    buttonState = digitalRead(buttonPin[buttonIndex]);
+  } 
+  Serial.println("Button Pressed"); 
+  motorChangeDirection(buttonIndex); 
+  if (driveForward[buttonIndex] == TRUE) {
+    driveForward[buttonIndex] = FALSE;
+  } else {
+      driveForward[buttonIndex] = TRUE; 
+  }
+  Serial.println("Motor Direction Changed");
+  EEPROM.write(buttonIndex, driveForward[buttonIndex]);
+  Serial.println("EEPROM written"); 
+}
+
+void motorChangeDirection(int motorIndex) {
+ int mV;
+ for (int i=slider[motorIndex]; i >= 0; i-= STEPVALUE) {
+  if (driveForward[motorIndex] == TRUE){
+    mV = mapValueForward(i); 
+  } else {
+    mV = mapValueReverse(i); 
+  }
+  pwm.setPWM(motorIndex,0,mV);
+ }
+ Serial.println("Motor Slowed Down"); 
+ pwm.setPWM(motorIndex,0,mapValueForward(0));
+ Serial.println("Motor Stopped");  
+ delay(1000); 
+ for (int i=0; i <= slider[motorIndex]; i+= STEPVALUE) {
+  if (driveForward[motorIndex] == FALSE){
+    mV = mapValueForward(i); 
+  } else {
+    mV = mapValueReverse(i); 
+  }
+  pwm.setPWM(motorIndex,0,mV);
+ }
+ Serial.println("Motor Revved"); 
+  if (driveForward[motorIndex] == FALSE){
+    mV = mapValueForward(slider[motorIndex]); 
+ } else {
+    mV = mapValueReverse(slider[motorIndex]); 
+  }
+ pwm.setPWM(motorIndex,0,mV);
+ Serial.println("Motor running same speed, different direction");
+}
